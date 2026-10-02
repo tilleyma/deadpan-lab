@@ -1,0 +1,232 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Deadpan Lab</title>
+<meta name="robots" content="noindex">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Libre+Caslon+Text:ital,wght@0,400;0,700;1,400&family=IBM+Plex+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --paper: #f4f0e6; --ink: #1d1b18; --muted: #6d675c; --line: #d6cfbf;
+    --accent: #8a2f1f; --card: #fffdf7;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --paper: #171614; --ink: #ece6d8; --muted: #a39c8e; --line: #34312c; --accent: #e07a5f; --card: #201e1b; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--paper); color: var(--ink); font: 17px/1.5 "Libre Caslon Text", Georgia, serif; }
+  main { max-width: 560px; margin: 0 auto; padding: 28px 16px 64px; }
+  header { border-bottom: 2px solid var(--ink); padding-bottom: 10px; margin-bottom: 22px; }
+  h1 { font-size: 2.3rem; margin: 0; letter-spacing: -0.02em; }
+  .tag { font: 600 0.72rem "IBM Plex Mono", monospace; letter-spacing: .14em; text-transform: uppercase; color: var(--accent); }
+  .sub { color: var(--muted); font-style: italic; margin: 4px 0 0; }
+  .drop { display: block; border: 1.5px dashed var(--line); border-radius: 6px; padding: 26px 16px; text-align: center; cursor: pointer; background: var(--card); }
+  .drop:hover { border-color: var(--ink); }
+  .drop input { display: none; }
+  #preview { max-width: 100%; max-height: 340px; border-radius: 4px; display: none; margin: 0 auto; }
+  .formats { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 16px 0; }
+  .fmt { border: 1.5px solid var(--line); background: var(--card); color: var(--ink); border-radius: 6px; padding: 12px; font: inherit; text-align: left; cursor: pointer; }
+  .fmt small { display: block; color: var(--muted); font-size: .8rem; }
+  .fmt[aria-pressed="true"] { border-color: var(--ink); box-shadow: inset 0 0 0 1px var(--ink); }
+  .go { width: 100%; padding: 14px; font: 600 .9rem "IBM Plex Mono", monospace; letter-spacing: .08em; text-transform: uppercase; background: var(--ink); color: var(--paper); border: 0; border-radius: 6px; cursor: pointer; }
+  .go:disabled { opacity: .4; cursor: default; }
+  #status { min-height: 1.5em; margin: 12px 0; color: var(--muted); font-style: italic; text-align: center; }
+  #result { display: none; }
+  #result img { width: 100%; border-radius: 4px; box-shadow: 0 2px 14px rgba(0,0,0,.15); }
+  .actions { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-top: 12px; }
+  .actions button { padding: 11px 6px; font: 600 .74rem "IBM Plex Mono", monospace; text-transform: uppercase; letter-spacing: .06em; border: 1.5px solid var(--ink); background: transparent; color: var(--ink); border-radius: 6px; cursor: pointer; }
+  footer { margin-top: 36px; border-top: 1px solid var(--line); padding-top: 12px; color: var(--muted); font-size: .8rem; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <div class="tag">Lab · friends only</div>
+    <h1>Deadpan</h1>
+    <p class="sub">Your photo, written up with complete seriousness.</p>
+  </header>
+
+  <label class="drop" id="drop">
+    <input type="file" id="file" accept="image/*">
+    <img id="preview" alt="Your photo">
+    <span id="dropText">Choose a photo: a night out, a wedding, the pub</span>
+  </label>
+
+  <div class="formats">
+    <button class="fmt" data-format="incident" aria-pressed="true">🚔 Incident report<small>For the record</small></button>
+    <button class="fmt" data-format="nature" aria-pressed="false">🦁 Nature documentary<small>Hushed observation</small></button>
+  </div>
+
+  <button class="go" id="go" disabled>Write it up</button>
+  <p id="status"></p>
+
+  <section id="result">
+    <img id="cardImg" alt="Your write-up card">
+    <div class="actions">
+      <button id="share">Share</button>
+      <button id="save">Save</button>
+      <button id="again">Again</button>
+    </div>
+  </section>
+
+  <footer>Photos aren't stored. They're used once to write your card, then discarded. No photos of under-18s, nothing explicit.</footer>
+</main>
+
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  let format = "incident", imageData = null, lastCard = null, lastPhoto = null;
+
+  const store = {
+    get(k) { try { return localStorage.getItem(k); } catch { return null; } },
+    set(k, v) { try { localStorage.setItem(k, v); } catch {} },
+  };
+  let passcode = store.get("deadpan-pass") || "";
+
+  document.querySelectorAll(".fmt").forEach((b) => b.addEventListener("click", () => {
+    format = b.dataset.format;
+    document.querySelectorAll(".fmt").forEach((x) => x.setAttribute("aria-pressed", x === b));
+  }));
+
+  $("file").addEventListener("change", async (e) => {
+    const f = e.target.files[0];
+    if (!f) return;
+    $("status").textContent = "";
+    try {
+      const img = await loadImage(URL.createObjectURL(f));
+      const max = 1400, s = Math.min(1, max / Math.max(img.width, img.height));
+      const c = document.createElement("canvas");
+      c.width = Math.round(img.width * s); c.height = Math.round(img.height * s);
+      c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+      const url = c.toDataURL("image/jpeg", 0.85);
+      imageData = url.split(",")[1];
+      lastPhoto = c;
+      $("preview").src = url; $("preview").style.display = "block"; $("dropText").style.display = "none";
+      $("go").disabled = false;
+    } catch {
+      $("status").textContent = "Couldn't read that image. Try a JPEG or PNG.";
+    }
+  });
+
+  $("go").addEventListener("click", run);
+  $("again").addEventListener("click", run);
+
+  async function run() {
+    if (!imageData) return;
+    $("go").disabled = true;
+    $("status").textContent = format === "incident" ? "Filing the report…" : "Observing quietly…";
+    try {
+      const r = await fetch("/api/caption", {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-lab-passcode": passcode },
+        body: JSON.stringify({ image: imageData, mediaType: "image/jpeg", format }),
+      });
+      if (r.status === 401) {
+        const p = prompt("Lab passcode?");
+        if (p) { passcode = p.trim(); store.set("deadpan-pass", passcode); return run(); }
+        throw new Error("A passcode is needed for the lab.");
+      }
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || "Something went wrong.");
+      if (d.refused) { $("status").textContent = d.reason; return; }
+      lastCard = await drawCard(d);
+      $("cardImg").src = lastCard.toDataURL("image/png");
+      $("result").style.display = "block";
+      $("status").textContent = "";
+      $("result").scrollIntoView({ behavior: "smooth" });
+    } catch (e) {
+      $("status").textContent = e.message;
+    } finally {
+      $("go").disabled = false;
+    }
+  }
+
+  function loadImage(src) {
+    return new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = src; });
+  }
+
+  function wrap(ctx, text, maxW) {
+    const words = text.split(/\s+/), lines = []; let line = "";
+    for (const w of words) {
+      const t = line ? line + " " + w : w;
+      if (ctx.measureText(t).width > maxW && line) { lines.push(line); line = w; } else line = t;
+    }
+    if (line) lines.push(line);
+    return lines;
+  }
+
+  async function drawCard(d) {
+    await document.fonts.ready;
+    const W = 1080, pad = 72, inner = W - pad * 2;
+    const nature = format === "nature";
+    const bg = nature ? "#14231b" : "#f4f0e6";
+    const ink = nature ? "#efe9d8" : "#1d1b18";
+    const accent = nature ? "#c9b26b" : "#8a2f1f";
+
+    const m = document.createElement("canvas").getContext("2d");
+    m.font = "400 38px 'Libre Caslon Text'";
+    const bodyLines = wrap(m, d.body, inner);
+    m.font = "700 50px 'Libre Caslon Text'";
+    const headLines = wrap(m, nature ? d.headline : d.headline, inner);
+    m.font = "italic 36px 'Libre Caslon Text'";
+    const kickLines = d.kicker ? wrap(m, "Outcome: " + d.kicker, inner) : [];
+
+    const photoH = Math.round(inner * Math.min(lastPhoto.height / lastPhoto.width, 0.9));
+    const H = pad + 40 + 30 + photoH + 50 + headLines.length * 62 + 24 + bodyLines.length * 54
+      + (kickLines.length ? 30 + kickLines.length * 50 : 0) + 70 + pad;
+
+    const c = document.createElement("canvas"); c.width = W; c.height = H;
+    const ctx = c.getContext("2d");
+    ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H);
+    let y = pad;
+
+    ctx.fillStyle = accent; ctx.font = "600 26px 'IBM Plex Mono'";
+    ctx.fillText(nature ? "EPISODE · THE HUMAN SPECIES" : "INCIDENT REPORT · REF " + Math.floor(1000 + Math.random() * 9000), pad, y + 26);
+    y += 40;
+    ctx.fillStyle = ink; ctx.fillRect(pad, y, inner, 3); y += 30;
+
+    ctx.drawImage(lastPhoto, 0, 0, lastPhoto.width, Math.min(lastPhoto.height, lastPhoto.width * 0.9), pad, y, inner, photoH);
+    y += photoH + 50;
+
+    ctx.fillStyle = ink; ctx.font = "700 50px 'Libre Caslon Text'";
+    for (const l of headLines) { ctx.fillText(l, pad, y + 44); y += 62; }
+    y += 24;
+    ctx.font = "400 38px 'Libre Caslon Text'";
+    for (const l of bodyLines) { ctx.fillText(l, pad, y + 38); y += 54; }
+    if (kickLines.length) {
+      y += 30; ctx.fillStyle = accent; ctx.font = "italic 36px 'Libre Caslon Text'";
+      for (const l of kickLines) { ctx.fillText(l, pad, y + 36); y += 50; }
+    }
+    y += 40;
+    ctx.fillStyle = nature ? "rgba(239,233,216,.5)" : "rgba(29,27,24,.45)";
+    ctx.font = "600 22px 'IBM Plex Mono'";
+    ctx.fillText("DEADPAN · LAB", pad, y + 22);
+    return c;
+  }
+
+  async function cardFile() {
+    const blob = await new Promise((r) => lastCard.toBlob(r, "image/png"));
+    return new File([blob], "deadpan.png", { type: "image/png" });
+  }
+
+  $("share").addEventListener("click", async () => {
+    if (!lastCard) return;
+    const f = await cardFile();
+    if (navigator.canShare && navigator.canShare({ files: [f] })) {
+      try { await navigator.share({ files: [f] }); } catch {}
+    } else {
+      $("status").textContent = "Sharing isn't supported here. Use Save instead.";
+    }
+  });
+
+  $("save").addEventListener("click", () => {
+    if (!lastCard) return;
+    const a = document.createElement("a");
+    a.href = lastCard.toDataURL("image/png"); a.download = "deadpan.png"; a.click();
+  });
+})();
+</script>
+</body>
+</html>
