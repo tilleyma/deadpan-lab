@@ -18,15 +18,13 @@ const MEDIA_TYPES = ["image/jpeg", "image/png", "image/webp", "image/gif"];
 const OUTPUT_RULES = `
 ## Output rules (system — not part of the tone guide)
 
-Reply with ONLY one JSON object. No prose before or after, no code fences.
+Always answer by calling the write_up tool. Never reply in plain text.
 
-Police incident report:
-{"refused": false, "headline": "<Location, short and specific, with a time if it fits>", "body": "<Summary, 35-70 words>", "kicker": "<Outcome, 4-15 words, without the word 'Outcome'>"}
+Police incident report: headline = Location (short and specific, with a time if it fits); body = Summary (35-70 words); kicker = Outcome (4-15 words, without the word "Outcome").
 
-Nature documentary:
-{"refused": false, "headline": "<Episode title, 2-6 words>", "body": "<Narration, 40-80 words>", "kicker": null}
+Nature documentary: headline = Episode title (2-6 words); body = Narration (40-80 words); kicker = empty string.
 
-Refuse with {"refused": true, "reason": "<one friendly sentence>"} if:
+Set refused = true, with reason = one friendly sentence and the other fields empty, if:
 - anyone in the photo may be under 18
 - there is nudity, sexual content or suggestive framing
 - the scene shows injury, an accident, a medical situation, real violence or weapons, or anything distressing
@@ -88,6 +86,22 @@ function json(data, status = 200) {
   });
 }
 
+const WRITE_UP_TOOL = {
+  name: "write_up",
+  description: "Return the finished deadpan write-up for the photo, or a refusal.",
+  input_schema: {
+    type: "object",
+    properties: {
+      refused: { type: "boolean", description: "True only if the photo breaks the refusal rules." },
+      reason: { type: "string", description: "If refused: one friendly sentence. Otherwise empty." },
+      headline: { type: "string" },
+      body: { type: "string" },
+      kicker: { type: "string", description: "Outcome line for incident reports; empty for nature documentary." },
+    },
+    required: ["refused", "headline", "body"],
+  },
+};
+
 function extractJson(text) {
   const start = text.indexOf("{");
   const end = text.lastIndexOf("}");
@@ -140,8 +154,10 @@ export default async (req) => {
     },
     body: JSON.stringify({
       model: MODEL,
-      max_tokens: 600,
+      max_tokens: 1024,
       system,
+      tools: [WRITE_UP_TOOL],
+      tool_choice: { type: "tool", name: "write_up" },
       messages: [
         {
           role: "user",
@@ -169,9 +185,13 @@ export default async (req) => {
   }
 
   const out = await r.json();
+  const toolUse = (out.content || []).find((b) => b.type === "tool_use" && b.name === "write_up");
   const text = (out.content || []).filter((b) => b.type === "text").map((b) => b.text).join("");
-  const parsed = extractJson(text);
-  if (!parsed) return json({ error: "Couldn't read the write-up. Try again." }, 502);
+  const parsed = toolUse?.input || extractJson(text);
+  if (!parsed || (!parsed.refused && !parsed.body)) {
+    console.error("Unreadable write-up", out.stop_reason, JSON.stringify(out.content).slice(0, 2000));
+    return json({ error: `Couldn't read the write-up (${out.stop_reason || "no content"}). Try again.` }, 502);
+  }
 
   if (parsed.refused) {
     return json({ refused: true, reason: parsed.reason || "This one's not for us." });
