@@ -145,43 +145,63 @@ export default async (req) => {
     return json({ error: "Tone guide missing on server" }, 500);
   }
 
-  const r = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "x-api-key": apiKey(),
-      "anthropic-version": "2023-06-01",
+  const userMsg = [
+    {
+      role: "user",
+      content: [
+        { type: "image", source: { type: "base64", media_type: mediaType, data: image } },
+        { type: "text", text: `Format: ${FORMATS[format]}. Write it up.` },
+      ],
     },
-    body: JSON.stringify({
+  ];
+  const JSON_FALLBACK = `
+
+If the write_up tool is not available, reply with ONLY one JSON object with the keys refused, reason, headline, body, kicker. No prose, no code fences.`;
+
+  // Try the strictest request first, then relax it if the model rejects an option.
+  const attempts = [
+    { tools: [WRITE_UP_TOOL], tool_choice: { type: "tool", name: "write_up" } },
+    { tools: [WRITE_UP_TOOL] },
+    { systemExtra: JSON_FALLBACK },
+  ];
+
+  let r, lastDetail = "";
+  for (const a of attempts) {
+    const body = {
       model: MODEL,
       max_tokens: 1024,
-      system,
-      tools: [WRITE_UP_TOOL],
-      tool_choice: { type: "tool", name: "write_up" },
-      messages: [
-        {
-          role: "user",
-          content: [
-            { type: "image", source: { type: "base64", media_type: mediaType, data: image } },
-            { type: "text", text: `Format: ${FORMATS[format]}. Write it up.` },
-          ],
-        },
-      ],
-    }),
-  });
+      system: system + (a.systemExtra || ""),
+      messages: userMsg,
+    };
+    if (a.tools) body.tools = a.tools;
+    if (a.tool_choice) body.tool_choice = a.tool_choice;
+    r = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-api-key": apiKey(),
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify(body),
+    });
+    if (r.ok || r.status !== 400) break;
+    lastDetail = await r.text();
+    console.error("Anthropic 400, relaxing request", lastDetail);
+    if (/credit|billing/i.test(lastDetail)) break;
+  }
 
   if (!r.ok) {
-    const detail = await r.text();
+    const detail = r.bodyUsed ? lastDetail : await r.text();
     console.error("Anthropic API error", r.status, detail);
-    let type = "";
-    try { type = JSON.parse(detail)?.error?.type || ""; } catch {}
+    let type = "", message = "";
+    try { const e = JSON.parse(detail)?.error || {}; type = e.type || ""; message = e.message || ""; } catch {}
     const hint =
       r.status === 401 ? "API key rejected. Check ANTHROPIC_API_KEY in Netlify." :
       r.status === 404 ? `Model "${MODEL}" not found. Set DEADPAN_MODEL in Netlify.` :
       r.status === 429 ? "Rate limit or spend cap reached." :
-      r.status === 400 && /credit|billing/i.test(detail) ? "Anthropic account has no credit." :
-      "The writer is unavailable. Try again shortly.";
-    return json({ error: `${hint} (API ${r.status}${type ? " " + type : ""})` }, 502);
+      /credit|billing/i.test(detail) ? "Anthropic account has no credit." :
+      "The writer is unavailable.";
+    return json({ error: `${hint} (API ${r.status}${type ? " " + type : ""}${message ? ": " + message.slice(0, 160) : ""})` }, 502);
   }
 
   const out = await r.json();
