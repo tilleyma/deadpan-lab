@@ -5,7 +5,8 @@ import { readFileSync, readdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const MODEL = process.env.DEADPAN_MODEL || "claude-sonnet-5-5";
+const MODEL = (process.env.DEADPAN_MODEL || "claude-sonnet-5-5").trim();
+const apiKey = () => (process.env.ANTHROPIC_API_KEY || "").trim().replace(/^["']|["']$/g, "");
 
 const FORMATS = {
   incident: "Police incident report",
@@ -105,7 +106,7 @@ export default async (req) => {
   if (passcode && req.headers.get("x-lab-passcode") !== passcode) {
     return json({ error: "Lab passcode required" }, 401);
   }
-  if (!process.env.ANTHROPIC_API_KEY || !process.env.ANTHROPIC_API_KEY.trim()) {
+  if (!apiKey()) {
     return json({ error: "Server is missing ANTHROPIC_API_KEY" }, 500);
   }
 
@@ -134,7 +135,7 @@ export default async (req) => {
     method: "POST",
     headers: {
       "content-type": "application/json",
-      "x-api-key": process.env.ANTHROPIC_API_KEY,
+      "x-api-key": apiKey(),
       "anthropic-version": "2023-06-01",
     },
     body: JSON.stringify({
