@@ -1,8 +1,9 @@
 // Deadpan lab — writes a deadpan write-up for one uploaded photo.
 // Photos are never stored: the image exists only in this request's memory.
 
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { readFileSync, readdirSync } from "node:fs";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const MODEL = process.env.DEADPAN_MODEL || "claude-sonnet-5-5";
 
@@ -41,18 +42,42 @@ Always:
 let guideCache;
 function toneGuide() {
   if (guideCache) return guideCache;
-  const candidates = [
-    join(process.cwd(), "tone-guide.md"),
-    join(process.cwd(), "..", "tone-guide.md"),
-    "/var/task/tone-guide.md",
-  ];
+  let here = process.cwd();
+  try { here = dirname(fileURLToPath(import.meta.url)); } catch {}
+  const roots = [process.cwd(), "/var/task", here, join(here, ".."), join(here, "..", "..")];
+  const candidates = [];
+  for (const r of roots) {
+    candidates.push(join(r, "tone-guide.md"), join(r, "deadpan", "tone-guide.md"));
+  }
   for (const p of candidates) {
     try {
       guideCache = readFileSync(p, "utf8");
       return guideCache;
     } catch {}
   }
+  // Last resort: search a few levels down from the function bundle root.
+  const found = search("/var/task", 4) || search(process.cwd(), 4);
+  if (found) {
+    guideCache = readFileSync(found, "utf8");
+    return guideCache;
+  }
   throw new Error("tone-guide.md not found. Check included_files in netlify.toml.");
+}
+
+function search(dir, depth) {
+  if (depth < 0) return null;
+  let entries;
+  try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return null; }
+  for (const e of entries) {
+    if (e.isFile() && e.name === "tone-guide.md") return join(dir, e.name);
+  }
+  for (const e of entries) {
+    if (e.isDirectory() && e.name !== "node_modules" && !e.name.startsWith(".")) {
+      const hit = search(join(dir, e.name), depth - 1);
+      if (hit) return hit;
+    }
+  }
+  return null;
 }
 
 function json(data, status = 200) {
@@ -80,7 +105,7 @@ export default async (req) => {
   if (passcode && req.headers.get("x-lab-passcode") !== passcode) {
     return json({ error: "Lab passcode required" }, 401);
   }
-  if (!process.env.ANTHROPIC_API_KEY) {
+  if (!process.env.ANTHROPIC_API_KEY || !process.env.ANTHROPIC_API_KEY.trim()) {
     return json({ error: "Server is missing ANTHROPIC_API_KEY" }, 500);
   }
 
@@ -129,8 +154,17 @@ export default async (req) => {
   });
 
   if (!r.ok) {
-    console.error("Anthropic API error", r.status, await r.text());
-    return json({ error: "The writer is unavailable. Try again shortly." }, 502);
+    const detail = await r.text();
+    console.error("Anthropic API error", r.status, detail);
+    let type = "";
+    try { type = JSON.parse(detail)?.error?.type || ""; } catch {}
+    const hint =
+      r.status === 401 ? "API key rejected. Check ANTHROPIC_API_KEY in Netlify." :
+      r.status === 404 ? `Model "${MODEL}" not found. Set DEADPAN_MODEL in Netlify.` :
+      r.status === 429 ? "Rate limit or spend cap reached." :
+      r.status === 400 && /credit|billing/i.test(detail) ? "Anthropic account has no credit." :
+      "The writer is unavailable. Try again shortly.";
+    return json({ error: `${hint} (API ${r.status}${type ? " " + type : ""})` }, 502);
   }
 
   const out = await r.json();
