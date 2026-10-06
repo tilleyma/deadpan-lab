@@ -20,9 +20,9 @@ const OUTPUT_RULES = `
 
 Always answer by calling the write_up tool. Never reply in plain text.
 
-Police incident report: headline = Location (short and specific, with a time if it fits); body = Summary (35-70 words); kicker = Outcome (4-15 words, without the word "Outcome").
+Police incident report: headline = Location with a time (under 8 words); body = Summary, 1-3 short lines on separate lines, under 35 words in total; kicker = Outcome, one short line, the punchline (under 10 words, without the word "Outcome").
 
-Nature documentary: headline = Episode title (2-6 words); body = Narration (40-80 words); kicker = empty string.
+Nature documentary: headline = Episode title (2-5 words); body = Narration, 2-4 short lines on separate lines, punchline alone on the last line, under 40 words in total; kicker = empty string.
 
 Set refused = true, with reason = one friendly sentence and the other fields empty, if:
 - anyone in the photo may be under 18

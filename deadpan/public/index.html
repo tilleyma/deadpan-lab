@@ -150,12 +150,16 @@
   }
 
   function wrap(ctx, text, maxW) {
-    const words = text.split(/\s+/), lines = []; let line = "";
-    for (const w of words) {
-      const t = line ? line + " " + w : w;
-      if (ctx.measureText(t).width > maxW && line) { lines.push(line); line = w; } else line = t;
+    // Respect the writer's own line breaks, then wrap each line to fit.
+    const lines = [];
+    for (const para of String(text).split(/\n+/)) {
+      const words = para.trim().split(/\s+/).filter(Boolean); let line = "";
+      for (const w of words) {
+        const t = line ? line + " " + w : w;
+        if (ctx.measureText(t).width > maxW && line) { lines.push(line); line = w; } else line = t;
+      }
+      if (line) lines.push(line);
     }
-    if (line) lines.push(line);
     return lines;
   }
 
